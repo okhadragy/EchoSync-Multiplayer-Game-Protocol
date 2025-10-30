@@ -8,8 +8,8 @@ The EchoSync Protocol (ESP) is a custom UDP-based protocol designed for low-late
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/okhadragy/EchoSync-Protocol
-cd "EchoSync-Protocol"
+git clone https://github.com/okhadragy/EchoSync-Multiplayer-Game-Protocol
+cd "EchoSync-Multiplayer-Game-Protocol"
 ```
 
 ### 2. Install Dependencies
