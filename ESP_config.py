@@ -202,7 +202,7 @@ class MetricsLogger:
 """  Helper functions """
 def make_header(msg_type: int, pkt_id: int, seq_num: int, payload_len: int, timestamp: int = None, checksum: int = 0):
     if timestamp is None:
-        timestamp = time.time_ns()
+        timestamp = time.time()
     return struct.pack(HEADER_FMT, PROTOCOL_ID, VERSION, msg_type, pkt_id, seq_num, timestamp, payload_len, checksum)
 
 def compute_checksum(header_bytes: bytes, payload: bytes) -> int:
@@ -214,7 +214,7 @@ def build_packet(msg_type: int, pkt_id: int, start_seq: int, payload: bytes) -> 
 
     # even if payload empty, still make one control packet
     if not payload:
-        ts = int(time.time_ns())
+        ts = int(time.time())
         header = make_header(msg_type, pkt_id, start_seq, 0, timestamp=ts, checksum=0)
         checksum = compute_checksum(header, b"")
         header = struct.pack(
@@ -238,7 +238,7 @@ def build_packet(msg_type: int, pkt_id: int, start_seq: int, payload: bytes) -> 
         end = min(len(payload), start + max_data)
         frag_data = payload[start:end]
 
-        ts = int(time.time_ns())
+        ts = int(time.time())
         header = make_header(msg_type, pkt_id, seq_num, len(frag_data), timestamp=ts, checksum=0)
         checksum = compute_checksum(header, frag_data)
         header = struct.pack(
