@@ -37,6 +37,12 @@ JOIN_ACK_HEADER_SIZE = struct.calcsize(JOIN_ACK_HEADER_FMT)
 JOIN_ACK_ENTRY_FMT = "!I B B B B"
 JOIN_ACK_ENTRY_SIZE = struct.calcsize(JOIN_ACK_ENTRY_FMT)
 
+# LEAVE_ROOM payload: empty
+
+# LEAVE_ACK payload: pkt_id (I)
+LEAVE_ACK_FMT = "!I"
+LEAVE_ACK_SIZE = struct.calcsize(LEAVE_ACK_FMT)
+
 # LIST_ROOMS Payload: empty
 
 # LIST_ROOMS_ACK Payload: pkt_id (I), room_count (B), followed by room entries (room_id (B), player_count (B), room_name_length (B), room_name (UTF-8 string))*
@@ -118,7 +124,7 @@ class Fragment:
 class FragmentManager:
     def __init__(self, timeout=5.0):
         self.fragments: Dict[Tuple[int, int], Fragment] = {}  # (client_id, msg_id) -> Fragment
-        self.timeout = timeout
+        self.timeout = timeout * 1e9
 
     def add_fragment(self, client_id, msg_id, seq, payload_len, payload):
         key = (client_id, msg_id)
@@ -342,6 +348,15 @@ def parse_join_ack_payload(payload: bytes):
         players[player_local_id] = (player_id, (r, g, b))
         offset += JOIN_ACK_ENTRY_SIZE
     return (pkt_id, player_local_id, players)
+
+def build_leave_ack_payload(pkt_id: int):
+    return struct.pack(LEAVE_ACK_FMT, pkt_id)
+
+def parse_leave_ack_payload(payload: bytes):
+    if len(payload) < LEAVE_ACK_SIZE:
+        return None
+    (pkt_id,) = struct.unpack(LEAVE_ACK_FMT, payload[:LEAVE_ACK_SIZE])
+    return pkt_id
 
 def build_list_rooms_ack_payload(pkt_id: int, rooms: Dict[int, Tuple[int, str]]):
     payload = struct.pack(LIST_ROOMS_ACK_HEADER_FMT, pkt_id, len(rooms))

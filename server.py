@@ -145,12 +145,26 @@ class ESPServerProtocol:
         
         self.player_room[player_id] = room_id
         
-        payload = build_join_ack_payload(pkt['id'], local_id, {lid: (p.global_id, p.color) for lid, p in room.players.items()})
-        pkts, seq_num = build_packet(MESSAGE_TYPES['JOIN_ACK'], pkt_id=self.next_id, start_seq=next_seq, payload=payload)
-        for p in pkts:
-            self.transport.sendto(p, addr)
+        players = {lid: (p.global_id, p.color) for lid, p in room.players.items()}    
+        for player_local_id, player in room.players.items():
+            next_seq = self.next_seq.get(player.global_id)
+            if next_seq is None:
+                continue
+            
+            player_info = self.players.get(player.global_id) 
+            if player_info is None:
+                continue
+            
+            address = player_info.address
+            
+            payload = build_join_ack_payload(pkt['id'], player_local_id, players)
+            pkts, seq_num = build_packet(MESSAGE_TYPES['JOIN_ACK'], pkt_id=self.next_id, start_seq=next_seq, payload=payload)
+            for p in pkts:
+                for i in range(REDUNDANT_K):
+                    self.transport.sendto(p, address)
+            self.next_seq[player.global_id] = seq_num
+            
         print(f"Player {player_id} joined room {room_id} as local id {local_id}")
-        self.next_seq[player_id] = seq_num
         self.next_id += 1
     
     def handle_leave_room(self, pkt, addr):
@@ -179,12 +193,26 @@ class ESPServerProtocol:
         self.players[player_id].player_local_id = 0
         del self.player_room[player_id]
         
-        payload = b''  # empty payload for LEAVE_ACK
-        pkts, seq_num = build_packet(MESSAGE_TYPES['LEAVE_ACK'], pkt_id=self.next_id, start_seq=next_seq, payload=payload)
-        for p in pkts:
-            self.transport.sendto(p, addr)
+        
+        payload = build_leave_ack_payload(pkt['id'])
+        for player_local_id, player in room.players.items():
+            next_seq = self.next_seq.get(player.global_id)
+            if next_seq is None:
+                continue
+            
+            player_info = self.players.get(player.global_id) 
+            if player_info is None:
+                continue
+            
+            address = player_info.address
+            
+            pkts, seq_num = build_packet(MESSAGE_TYPES['LEAVE_ACK'], pkt_id=self.next_id, start_seq=next_seq, payload=payload)
+            for p in pkts:
+                for i in range(REDUNDANT_K):
+                    self.transport.sendto(p, address)
+            self.next_seq[player.global_id] = seq_num
+            
         print(f"Player {player_id} left room {room_id}")
-        self.next_seq[player_id] = seq_num
         self.next_id += 1
         
     def handle_list_rooms(self, pkt, addr):
@@ -226,16 +254,22 @@ class ESPServerProtocol:
             self.handle_cell_acquisition(room, player_local_id, cell_idx)
             
         
-        for addr, pid in self.addr_to_player.items():
-            next_seq = self.next_seq.get(pid)
+        for player_local_id, player in room.players.items():
+            next_seq = self.next_seq.get(player.global_id)
             if next_seq is None:
-                return
+                continue
+            
+            player_info = self.players.get(player.global_id) 
+            if player_info is None:
+                continue
+            
+            address = player_info.address
             
             pkts, seq_num = build_packet(MESSAGE_TYPES['EVENT'], pkt_id=self.next_id, start_seq=next_seq, payload=b'')
             for p in pkts:
                 for i in range(REDUNDANT_K):
-                    self.transport.sendto(p, addr)
-            self.next_seq[pid] = seq_num
+                    self.transport.sendto(p, address)
+            self.next_seq[player.global_id] = seq_num
         self.next_id += 1
         
     def handle_cell_acquisition(self, room, player_local_id, cell_idx):
@@ -282,17 +316,19 @@ class ESPServerProtocol:
                 if next_seq is None:
                     continue
                 
-                pkts, seq_num = build_packet(MESSAGE_TYPES['SNAPSHOT'], self.next_id, start_seq=next_seq, payload=payload)
+                pkts, _ = build_packet(MESSAGE_TYPES['SNAPSHOT'], self.next_id, start_seq=next_seq, payload=payload)
+                seq_num = next_seq
                 addr = self.players[player.global_id].address
                 for p in pkts:
                     now = time.time_ns()
-                    self.snapshot_buffer[(self.next_seq[player.global_id], player.global_id)] = {
+                    self.snapshot_buffer[(seq_num, player.global_id)] = {
                         'packet': p,
                         'last_sent': now,
                         'sent_count': 1
                     }
                     self.transport.sendto(p, addr)
-                    print(f"Snapshot Semt Player ID:{player.global_id}, Seq_num:{self.next_seq[player.global_id]}")
+                    print(f"Snapshot Sent Player ID:{player.global_id}, Seq_num:{seq_num}")
+                    seq_num+=1
                 self.next_seq[player.global_id] = seq_num
         self.next_id += 1
         
@@ -397,12 +433,6 @@ if __name__ == "__main__":
 
     loop = asyncio.get_event_loop()
     transport, proto = loop.run_until_complete(run_server())
-
-    # Start periodic tasks
-    loop.create_task(proto.periodic_snapshots())
-    loop.create_task(proto.periodic_retransmit())
-    loop.create_task(proto.cleanup_fragments_periodically())
-    loop.create_task(proto.periodic_acked_snapshots_cleanup())
 
     # Only stop if duration was given
     if args.duration:
