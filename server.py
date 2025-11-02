@@ -1,7 +1,5 @@
 from ESP_config import *
-import time, asyncio, random, logging, argparse
-from collections import defaultdict
-from typing import Dict, Tuple
+import asyncio, logging, argparse
 
 # ====== Server Implementation ======
 class ESPServerProtocol:
@@ -35,10 +33,13 @@ class ESPServerProtocol:
         if pkt is None:
             return
 
-        payload = self.fragment_manager.add_fragment(addr, pkt['id'], pkt['seq'], pkt['payload_len'], pkt['payload'])
-        if payload is None:
-            return  # waiting for more fragments
+        frag_result = self.fragment_manager.add_fragment(addr, pkt['id'], pkt['seq'], pkt['payload_len'], pkt['payload'])
+        if frag_result is None:
+            return # waiting for more fragments
+        
+        (seq_keys, payload) = frag_result
         pkt['payload'] = payload
+        pkt['seq_keys'] = seq_keys
         
         t = pkt['msg_type']
         if t == MESSAGE_TYPES['INIT']:
@@ -70,42 +71,51 @@ class ESPServerProtocol:
     def resume_writing(self):
         pass
     
-    # Handlers
-    def handle_init(self, pkt, addr):
-        self.players[self.next_player_id] = PlayerRoomInfo(address=addr, room_id=0, player_local_id=0)
-        self.addr_to_player[addr] = self.next_player_id
-        self.next_seq[self.next_player_id] = 1
-        payload = build_init_ack_payload(pkt['id'], self.next_player_id)
-        pkts, seq_num = build_packet(MESSAGE_TYPES['INIT_ACK'], pkt_id=self.next_id, start_seq=self.next_seq[self.next_player_id], payload=payload)
-        for p in pkts:
-            self.transport.sendto(p, addr)
-        print(f"Connected player {self.next_player_id} from {addr}")
-        self.next_seq[self.next_player_id] = seq_num
-        self.next_player_id += 1
-        self.next_id += 1
+    # === Send helpers ===
+    def send(self, msg_type, address, payload=b'', repeat = 1):
+        if repeat < 1:
+            return None
         
-    def handle_create_room(self, pkt, addr):
-        
-        player_id = self.addr_to_player.get(addr)
+        player_id = self.addr_to_player.get(address)
         if player_id is None:
             return
         
         next_seq = self.next_seq.get(player_id)
         if next_seq is None:
-            return
+            return None
         
+        pkts, seq_num = build_packet(msg_type, self.next_id, self.next_seq[player_id], payload)
+        for p in pkts:
+            for i in range(repeat):
+                self.transport.sendto(p, address)
+        self.next_seq[player_id] = seq_num
+    
+    # Handlers
+    def handle_init(self, pkt, addr):
+        self.players[self.next_player_id] = PlayerRoomInfo(address=addr, room_id=0, player_local_id=0)
+        self.addr_to_player[addr] = self.next_player_id
+        self.next_seq[self.next_player_id] = 1
+        for seq_key in pkt['seq_keys']:
+            payload = build_init_ack_payload(seq_key, self.next_player_id)
+            if self.send(MESSAGE_TYPES['INIT_ACK'], addr, payload) is None:
+                return
+        print(f"Connected player {self.next_player_id} from {addr}")
+        self.next_player_id += 1
+        self.next_id += 1
+        
+    def handle_create_room(self, pkt, addr):
         room_name = parse_create_room_payload(pkt['payload'])
         if room_name is None:
             return
         
         room_id = self.next_room_id
         self.rooms[room_id] = Room(room_id=room_id, name=room_name)
-        payload = build_create_ack_payload(pkt['id'], room_id)
-        pkts, seq_num = build_packet(MESSAGE_TYPES['CREATE_ACK'], pkt_id=self.next_id, start_seq=next_seq, payload=payload)
-        for p in pkts:
-            self.transport.sendto(p, addr)
+        for seq_key in pkt['seq_keys']:
+            payload = build_create_ack_payload(seq_key, room_id)
+            if self.send(MESSAGE_TYPES['CREATE_ACK'], addr, payload) is None:
+                return
+                
         print(f"Created room {room_id} named '{room_name}'")
-        self.next_seq[player_id] = seq_num
         self.next_room_id += 1
         self.next_id += 1
         
@@ -146,23 +156,20 @@ class ESPServerProtocol:
         self.player_room[player_id] = room_id
         
         players = {lid: (p.global_id, p.color) for lid, p in room.players.items()}    
-        for player_local_id, player in room.players.items():
-            next_seq = self.next_seq.get(player.global_id)
-            if next_seq is None:
-                continue
-            
+        for ld, player in room.players.items():            
             player_info = self.players.get(player.global_id) 
             if player_info is None:
                 continue
             
             address = player_info.address
-            
-            payload = build_join_ack_payload(pkt['id'], player_local_id, players)
-            pkts, seq_num = build_packet(MESSAGE_TYPES['JOIN_ACK'], pkt_id=self.next_id, start_seq=next_seq, payload=payload)
-            for p in pkts:
-                for i in range(REDUNDANT_K):
-                    self.transport.sendto(p, address)
-            self.next_seq[player.global_id] = seq_num
+            seq_keys = [pkt['seq_keys'][0]]
+            if ld == local_id:
+                seq_keys = pkt['seq_keys']
+                
+            for seq_key in seq_keys:
+                payload = build_join_ack_payload(seq_key, ld, players)
+                if self.send(MESSAGE_TYPES['JOIN_ACK'], address, payload, REDUNDANT_K) is None:
+                    break
             
         print(f"Player {player_id} joined room {room_id} as local id {local_id}")
         self.next_id += 1
@@ -194,23 +201,20 @@ class ESPServerProtocol:
         del self.player_room[player_id]
         
         
-        payload = build_leave_ack_payload(pkt['id'])
-        for player_local_id, player in room.players.items():
-            next_seq = self.next_seq.get(player.global_id)
-            if next_seq is None:
-                continue
-            
+        for ld, player in room.players.items():            
             player_info = self.players.get(player.global_id) 
             if player_info is None:
                 continue
             
             address = player_info.address
-            
-            pkts, seq_num = build_packet(MESSAGE_TYPES['LEAVE_ACK'], pkt_id=self.next_id, start_seq=next_seq, payload=payload)
-            for p in pkts:
-                for i in range(REDUNDANT_K):
-                    self.transport.sendto(p, address)
-            self.next_seq[player.global_id] = seq_num
+            seq_keys = [pkt['seq_keys'][0]]
+            if ld == local_id:
+                seq_keys = pkt['seq_keys']
+    
+            for seq_key in seq_keys:
+                payload = build_leave_ack_payload(seq_key)
+                if self.send(MESSAGE_TYPES['LEAVE_ACK'], address, payload, REDUNDANT_K) is None:
+                    break
             
         print(f"Player {player_id} left room {room_id}")
         self.next_id += 1
@@ -220,17 +224,14 @@ class ESPServerProtocol:
         if player_id is None:
             return
         
-        next_seq = self.next_seq.get(player_id)
-        if next_seq is None:
-            return
-        
         rooms_info = {room_id: (len(room.players), room.name) for room_id, room in self.rooms.items()}
-        payload = build_list_rooms_ack_payload(pkt['id'], rooms_info)
-        pkts, seq_num = build_packet(MESSAGE_TYPES['LIST_ROOMS_ACK'], pkt_id=self.next_id, start_seq=next_seq, payload=payload)
-        for p in pkts:
-            self.transport.sendto(p, addr)
+        
+        for seq_key in pkt['seq_keys']:
+            payload = build_list_rooms_ack_payload(seq_key, rooms_info)
+            if self.send(MESSAGE_TYPES['LIST_ROOMS_ACK'], addr, payload) is None:
+                return
+        
         print(f"Sent room list to {addr}")
-        self.next_seq[player_id] = seq_num
         self.next_id += 1
         
     def handle_event(self, pkt, addr):
@@ -252,24 +253,17 @@ class ESPServerProtocol:
         
         if event_type == EVENT_TYPES['CELL_ACQUISITION']:
             self.handle_cell_acquisition(room, player_local_id, cell_idx)
-            
         
-        for player_local_id, player in room.players.items():
-            next_seq = self.next_seq.get(player.global_id)
-            if next_seq is None:
-                continue
-            
+        for ld, player in room.players.items():
             player_info = self.players.get(player.global_id) 
             if player_info is None:
                 continue
             
             address = player_info.address
+            if self.send(MESSAGE_TYPES['EVENT'], address, pkt['payload'], REDUNDANT_K) is None:
+                return
             
-            pkts, seq_num = build_packet(MESSAGE_TYPES['EVENT'], pkt_id=self.next_id, start_seq=next_seq, payload=b'')
-            for p in pkts:
-                for i in range(REDUNDANT_K):
-                    self.transport.sendto(p, address)
-            self.next_seq[player.global_id] = seq_num
+            print(f"Sent event to {address}")
         self.next_id += 1
         
     def handle_cell_acquisition(self, room, player_local_id, cell_idx):
@@ -317,19 +311,18 @@ class ESPServerProtocol:
                     continue
                 
                 pkts, _ = build_packet(MESSAGE_TYPES['SNAPSHOT'], self.next_id, start_seq=next_seq, payload=payload)
-                seq_num = next_seq
                 addr = self.players[player.global_id].address
                 for p in pkts:
                     now = time.time_ns()
-                    self.snapshot_buffer[(seq_num, player.global_id)] = {
+                    self.snapshot_buffer[(next_seq, player.global_id)] = {
                         'packet': p,
                         'last_sent': now,
                         'sent_count': 1
                     }
                     self.transport.sendto(p, addr)
-                    print(f"Snapshot Sent Player ID:{player.global_id}, Seq_num:{seq_num}")
-                    seq_num+=1
-                self.next_seq[player.global_id] = seq_num
+                    print(f"Snapshot Sent Player ID:{player.global_id}, Seq_num:{next_seq}")
+                    next_seq+=1
+                self.next_seq[player.global_id] = next_seq
         self.next_id += 1
         
     def clear_player_acked_snapshots(self, player_id: int) -> None:

@@ -1,4 +1,4 @@
-import struct, time, zlib, csv, os, psutil, random
+import struct, time, zlib, csv, psutil, random
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, Tuple, List
@@ -17,13 +17,13 @@ HEADER_SIZE = struct.calcsize(HEADER_FMT) # should be 28 bytes
 """  Payload Formats """
 # INIT Payload: empty
 
-# INIT_ACK Payload: pkt_id (I), player_id (I)
+# INIT_ACK Payload: seq_num (I), player_id (I)
 INIT_ACK_FMT = "!I I"
 INIT_ACK_SIZE = struct.calcsize(INIT_ACK_FMT)
 
 # CREATE_ROOM Payload: room_name (variable length string, UTF-8)
 
-# CREATE_ACK Payload: pkt_id (I), room_id (B)
+# CREATE_ACK Payload: seq_num (I), room_id (B)
 CREATE_ACK_FMT = "!I B"
 CREATE_ACK_SIZE = struct.calcsize(CREATE_ACK_FMT)
 
@@ -31,7 +31,7 @@ CREATE_ACK_SIZE = struct.calcsize(CREATE_ACK_FMT)
 JOIN_ROOM_FMT = "!B"
 JOIN_ROOM_SIZE = struct.calcsize(JOIN_ROOM_FMT)
 
-# JOIN_ACK Payload: pkt_id (I), local_id (B), players_count (B), followed by room players (player_id (I), player_local_id (B), player_color (RED (B), GREEN (B), BLUE (B))*
+# JOIN_ACK Payload: seq_num (I), local_id (B), players_count (B), followed by room players (player_id (I), player_local_id (B), player_color (RED (B), GREEN (B), BLUE (B))*
 JOIN_ACK_HEADER_FMT = "!I B B"
 JOIN_ACK_HEADER_SIZE = struct.calcsize(JOIN_ACK_HEADER_FMT)
 JOIN_ACK_ENTRY_FMT = "!I B B B B"
@@ -39,13 +39,13 @@ JOIN_ACK_ENTRY_SIZE = struct.calcsize(JOIN_ACK_ENTRY_FMT)
 
 # LEAVE_ROOM payload: empty
 
-# LEAVE_ACK payload: pkt_id (I)
+# LEAVE_ACK payload: seq_num (I)
 LEAVE_ACK_FMT = "!I"
 LEAVE_ACK_SIZE = struct.calcsize(LEAVE_ACK_FMT)
 
 # LIST_ROOMS Payload: empty
 
-# LIST_ROOMS_ACK Payload: pkt_id (I), room_count (B), followed by room entries (room_id (B), player_count (B), room_name_length (B), room_name (UTF-8 string))*
+# LIST_ROOMS_ACK Payload: seq_num (I), room_count (B), followed by room entries (room_id (B), player_count (B), room_name_length (B), room_name (UTF-8 string))*
 LIST_ROOMS_ACK_HEADER_FMT = "!I B"
 LIST_ROOMS_ACK_HEADER_SIZE = struct.calcsize(LIST_ROOMS_ACK_HEADER_FMT)
 LIST_ROOMS_ACK_ENTRY_FMT = "!B B B"
@@ -123,11 +123,11 @@ class Fragment:
 
 class FragmentManager:
     def __init__(self, timeout=5.0):
-        self.fragments: Dict[Tuple[int, int], Fragment] = {}  # (client_id, msg_id) -> Fragment
+        self.fragments: Dict[Tuple[Tuple[int,int], int], Fragment] = {}  # ((ip, port), msg_id) -> Fragment
         self.timeout = timeout * 1e9
 
-    def add_fragment(self, client_id, msg_id, seq, payload_len, payload):
-        key = (client_id, msg_id)
+    def add_fragment(self, client_address, msg_id, seq, payload_len, payload):
+        key = (client_address, msg_id)
         if key not in self.fragments:
             self.fragments[key] = Fragment(expected_bytes=payload_len)
 
@@ -146,7 +146,7 @@ class FragmentManager:
                 return None
             full_payload = b''.join(frag.frags[i] for i in seq_keys)
             del self.fragments[key]
-            return full_payload
+            return (seq_keys, full_payload)
         
         return None
 
@@ -292,14 +292,14 @@ def parse_packet(data: bytes):
         'payload': payload
     }
 
-def build_init_ack_payload(pkt_id: int, player_id: int):
-    return struct.pack(INIT_ACK_FMT, pkt_id, player_id)
+def build_init_ack_payload(seq_num: int, player_id: int):
+    return struct.pack(INIT_ACK_FMT, seq_num, player_id)
 
 def parse_init_ack_payload(payload: bytes):
     if len(payload) < INIT_ACK_SIZE:
         return None
-    (pkt_id, player_id) = struct.unpack(INIT_ACK_FMT, payload[:INIT_ACK_SIZE])
-    return (pkt_id, player_id)
+    (seq_num, player_id) = struct.unpack(INIT_ACK_FMT, payload[:INIT_ACK_SIZE])
+    return (seq_num, player_id)
 
 def build_create_room_payload(room_name: str):
     name_bytes = room_name.encode('utf-8')
@@ -309,14 +309,14 @@ def parse_create_room_payload(payload: bytes):
     room_name = payload.decode('utf-8')
     return room_name
 
-def build_create_ack_payload(pkt_id: int, room_id: int):
-    return struct.pack(CREATE_ACK_FMT, pkt_id, room_id)
+def build_create_ack_payload(seq_num: int, room_id: int):
+    return struct.pack(CREATE_ACK_FMT, seq_num, room_id)
 
 def parse_create_ack_payload(payload: bytes):
     if len(payload) < CREATE_ACK_SIZE:
         return None
-    (pkt_id, room_id) = struct.unpack(CREATE_ACK_FMT, payload[:CREATE_ACK_SIZE])
-    return (pkt_id, room_id)
+    (seq_num, room_id) = struct.unpack(CREATE_ACK_FMT, payload[:CREATE_ACK_SIZE])
+    return (seq_num, room_id)
 
 def build_join_room_payload(room_id: int):
     return struct.pack(JOIN_ROOM_FMT, room_id)
@@ -327,8 +327,8 @@ def parse_join_room_payload(payload: bytes):
     (room_id,) = struct.unpack(JOIN_ROOM_FMT, payload[:JOIN_ROOM_SIZE])
     return room_id
 
-def build_join_ack_payload(pkt_id: int, player_local_id: int, players: Dict[int, Dict[int, Tuple[int, Tuple[int,int,int]]]]):
-    payload = struct.pack(JOIN_ACK_HEADER_FMT, pkt_id, player_local_id, len(players))
+def build_join_ack_payload(seq_num: int, player_local_id: int, players: Dict[int, Dict[int, Tuple[int, Tuple[int,int,int]]]]):
+    payload = struct.pack(JOIN_ACK_HEADER_FMT, seq_num, player_local_id, len(players))
     for player_local_id, (player_id, color) in players.items():
         r, g, b = color
         payload += struct.pack(JOIN_ACK_ENTRY_FMT, player_id, player_local_id, r, g, b)
@@ -337,7 +337,7 @@ def build_join_ack_payload(pkt_id: int, player_local_id: int, players: Dict[int,
 def parse_join_ack_payload(payload: bytes):
     if len(payload) < JOIN_ACK_HEADER_SIZE:
         return None
-    (pkt_id, player_local_id, players_count) = struct.unpack(JOIN_ACK_HEADER_FMT, payload[:JOIN_ACK_HEADER_SIZE])
+    (seq_num, player_local_id, players_count) = struct.unpack(JOIN_ACK_HEADER_FMT, payload[:JOIN_ACK_HEADER_SIZE])
     players = {}
     offset = JOIN_ACK_HEADER_SIZE
     for _ in range(players_count):
@@ -347,19 +347,19 @@ def parse_join_ack_payload(payload: bytes):
         player_id, player_local_id, r, g, b = struct.unpack(JOIN_ACK_ENTRY_FMT, entry)
         players[player_local_id] = (player_id, (r, g, b))
         offset += JOIN_ACK_ENTRY_SIZE
-    return (pkt_id, player_local_id, players)
+    return (seq_num, player_local_id, players)
 
-def build_leave_ack_payload(pkt_id: int):
-    return struct.pack(LEAVE_ACK_FMT, pkt_id)
+def build_leave_ack_payload(seq_num: int):
+    return struct.pack(LEAVE_ACK_FMT, seq_num)
 
 def parse_leave_ack_payload(payload: bytes):
     if len(payload) < LEAVE_ACK_SIZE:
         return None
-    (pkt_id,) = struct.unpack(LEAVE_ACK_FMT, payload[:LEAVE_ACK_SIZE])
-    return pkt_id
+    (seq_num,) = struct.unpack(LEAVE_ACK_FMT, payload[:LEAVE_ACK_SIZE])
+    return seq_num
 
-def build_list_rooms_ack_payload(pkt_id: int, rooms: Dict[int, Tuple[int, str]]):
-    payload = struct.pack(LIST_ROOMS_ACK_HEADER_FMT, pkt_id, len(rooms))
+def build_list_rooms_ack_payload(seq_num: int, rooms: Dict[int, Tuple[int, str]]):
+    payload = struct.pack(LIST_ROOMS_ACK_HEADER_FMT, seq_num, len(rooms))
     for room_id, (player_count, room_name) in rooms.items():
         name_bytes = room_name.encode("utf-8")
         name_len = len(name_bytes)
@@ -371,7 +371,7 @@ def parse_list_rooms_ack_payload(payload: bytes):
     if len(payload) < LIST_ROOMS_ACK_HEADER_SIZE:
         return None
 
-    (pkt_id, room_count) = struct.unpack(LIST_ROOMS_ACK_HEADER_FMT, payload[:LIST_ROOMS_ACK_HEADER_SIZE])
+    (seq_num, room_count) = struct.unpack(LIST_ROOMS_ACK_HEADER_FMT, payload[:LIST_ROOMS_ACK_HEADER_SIZE])
     rooms = {}
     offset = LIST_ROOMS_ACK_HEADER_SIZE
 
@@ -391,7 +391,7 @@ def parse_list_rooms_ack_payload(payload: bytes):
 
         rooms[room_id] = (player_count, room_name)
 
-    return (pkt_id, rooms)
+    return (seq_num, rooms)
 
 def build_event_payload(event_type: int, room_id: int, player_local_id: int, cell_idx: int):
     return struct.pack(EVENT_FMT, event_type, room_id, player_local_id, cell_idx)
