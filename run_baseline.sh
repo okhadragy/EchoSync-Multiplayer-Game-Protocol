@@ -8,7 +8,6 @@ mkdir -p "$LOGDIR" "$RESULTS_DIR"
 
 NUM_CLIENTS=4
 DURATION=60  # seconds
-CLIENTDURATION=40  # seconds
 
 echo "[TEST] Running baseline: duration=${DURATION}s, clients=${NUM_CLIENTS}"
 
@@ -25,20 +24,22 @@ sleep 2
 CLIENT_PIDS=()
 
 # 1️⃣ Client 1 → test 0
-python3 client.py --test "0" --duration $CLIENTDURATION > "$LOGDIR/client1_stdout.log" 2>&1 &
+python3 client.py --test "0" --duration $DURATION > "$LOGDIR/client1_stdout.log" 2>&1 &
 CLIENT_PIDS+=($!)
 echo "[TEST] Started client1 (test=0, PID=${CLIENT_PIDS[-1]})"
 
+sleep $((5))
+
 # 2️⃣–4️⃣ Clients 2-4 → test 1
 for ((i=2; i<=NUM_CLIENTS; i++)); do
-  python3 client.py --test "1" --duration $CLIENTDURATION > "$LOGDIR/client${i}_stdout.log" 2>&1 &
+  python3 client.py --test "1" --duration $DURATION > "$LOGDIR/client${i}_stdout.log" 2>&1 &
   CLIENT_PIDS+=($!)
   echo "[TEST] Started client${i} (test=1, PID=${CLIENT_PIDS[-1]})"
   sleep 0.5
 done
 
 # Wait for test duration
-sleep $((CLIENTDURATION + 5))
+sleep $((DURATION + 5))
 
 # Kill all processes
 echo "[TEST] Stopping all..."
