@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import os
 
 # -------- Paths --------
-merged_path = "metrics.csv"
+merged_path = "./results/metrics.csv"
 summary_path = "./results/summary.csv"
 plots_dir = "./plots"
 os.makedirs("./results", exist_ok=True)
