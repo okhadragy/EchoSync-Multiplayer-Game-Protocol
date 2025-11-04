@@ -1,4 +1,5 @@
 /venv
 /old_version
 /logs
+/Documents
 .env
