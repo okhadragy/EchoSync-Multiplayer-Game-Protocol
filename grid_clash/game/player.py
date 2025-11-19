@@ -11,12 +11,9 @@ class Player:
         self.id = player_id
         self.name = name
         self.color_index = color_index
+        self._color = None  # Allow direct color assignment
         self.score = 0
         self.is_ready = False
-
-    @property
-    def color(self):
-        return PLAYER_COLORS[self.color_index % len(PLAYER_COLORS)]
 
     def to_dict(self):
         return {

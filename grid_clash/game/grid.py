@@ -36,10 +36,26 @@ class GameGrid:
         return False
 
     def get_winner(self):
-        """Get the player with the highest score"""
-        if not self.scores:
-            return None
-        return max(self.scores.items(), key=lambda x: x[1])
+        """Get the player with the highest score. Handle ties."""
+
+        # recalculate score to avoid synchronization issues
+        scores = {}
+        for cell_owner in self.grid:
+            if cell_owner > 0:
+                scores[cell_owner] = scores.get(cell_owner, 0) + 1
+
+        if not scores:
+            return None, 0
+        
+        max_score = max(scores.values())
+        winners = [player_id for player_id, score in scores.items() if score == max_score]
+        
+        # ties
+        if len(winners) > 1:
+            # None = tie
+            return None, max_score
+        else:
+            return winners[0], max_score
 
     def is_full(self):
         return all(cell != 0 for cell in self.grid)

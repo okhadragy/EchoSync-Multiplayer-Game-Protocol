@@ -11,6 +11,9 @@ class Room:
         self.players = {}  # player_id -> Player
         self.max_players = 16
         self.is_game_started = False
+        self.winner = None
+        self.winner_score = 0
+        self.is_tie = False
 
     def add_player(self, player_id, player_name, color_index=None):  # ADD color_index parameter
         if len(self.players) >= self.max_players:

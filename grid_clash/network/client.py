@@ -18,7 +18,7 @@ class GridClashNetworkClient:
         self.room_list = []
         self.current_room = None
         self.players = {}
-        self.grid = [0] * (20 * 20)  # 20x20 grid
+        self.grid = [0] * TOTAL_CELLS
         
         # Callbacks for UI updates
         self.on_room_list_update: Optional[Callable] = None
@@ -60,7 +60,7 @@ class GridClashNetworkClient:
         self.esp_client.handle_recv()
         
         # Update room list if available
-        if hasattr(self.esp_client, 'rooms') and self.esp_client.rooms:
+        if hasattr(self.esp_client, 'rooms'):
             new_rooms = []
             for room_id, (player_count, room_name) in self.esp_client.rooms.items():
                 new_rooms.append({
@@ -83,7 +83,7 @@ class GridClashNetworkClient:
                     self.on_player_list_update(self.players)
                 
         # Update grid state
-        if hasattr(self.esp_client, 'grid') and self.esp_client.grid != self.grid:
+        if hasattr(self.esp_client, 'grid'):
             self.grid = self.esp_client.grid.copy()
             if self.on_grid_update:
                 self.on_grid_update(self.grid)
@@ -135,7 +135,7 @@ class GridClashNetworkClient:
         if not self.esp_client or not self.esp_client.room_id:
             return False
             
-        cell_idx = cell_y * 20 + cell_x
+        cell_idx = cell_y * GRID_N + cell_x
         self.esp_client.request_cell(cell_idx)
         return True
         

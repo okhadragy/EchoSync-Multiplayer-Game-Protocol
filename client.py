@@ -243,6 +243,8 @@ class ESPClientProtocol:
             seq, room_id, local_id, self.players = res # players should be updated even if it is not my ack
             if not self.ack_packet(seq):
                 return
+            
+            # self.snapshot_id = 0 # reset snapshot_id when joining a room
             self.room_id = room_id
             self.local_id = local_id
             
@@ -299,6 +301,7 @@ class ESPClientProtocol:
         if not ev:
             return
         event_type, room_id, player_local_id, cell_idx = ev
+        
         self.update_cell(event_type, player_local_id, cell_idx)
         self.snapshot_id = pkt['snapshot_id']
 

@@ -60,49 +60,32 @@ class GridClashGame:
                 room_name = f"Room {room_id}" if room_id else "New Room"
                 self.current_room = Room(room_name, room_id, player_info.get('local_id', 1))
                 
-                # Clear and recreate players with FIXED COLORS
+                # Clear and recreate players with SERVER COLORS
                 self.current_room.players.clear()
-                for local_id, (global_id, color) in players.items():
+                for local_id, (global_id, server_color) in players.items():
                     player_name = "You" if local_id == player_info.get('local_id') else f"Player {local_id}"
                     
-                    # Use FIXED colors based on local_id
-                    color_index = local_id % len(PLAYER_COLORS)
-                    self.current_room.players[local_id] = Player(local_id, player_name, color_index=color_index)
-                
+                    # Use SERVER COLORS directly
+                    self.current_room.players[local_id] = Player(local_id, player_name)
+                    # Override the color with server's assignment
+                    self.current_room.players[local_id]._color = server_color
+                    
                 # Transition to lobby if we're not already there
                 if not isinstance(self.current_screen, LobbyScreen):
                     self.set_screen("lobby")
+            
             else:
-                # Update existing room players with FIXED COLORS
+                # Update existing room players with SERVER COLORS
                 player_info = self.network_client.get_player_info()
                 self.current_room.players.clear()
-                for local_id, (global_id, color) in players.items():
+                for local_id, (global_id, server_color) in players.items():
                     player_name = "You" if local_id == player_info.get('local_id') else f"Player {local_id}"
                     
-                    # Use FIXED colors based on local_id
-                    color_index = local_id % len(PLAYER_COLORS)
-                    self.current_room.players[local_id] = Player(local_id, player_name, color_index=color_index)
+                    # Use SERVER COLORS directly
+                    self.current_room.players[local_id] = Player(local_id, player_name)
+                    # Override the color with server's assignment
+                    self.current_room.players[local_id]._color = server_color
 
-    def _find_color_index(self, target_color):
-        """Find the color index for a given RGB color"""
-        from config import PLAYER_COLORS
-        # Look for exact match first
-        for i, color in enumerate(PLAYER_COLORS):
-            if color == target_color:
-                return i
-        
-        # If no exact match, find closest color
-        closest_index = 0
-        min_distance = float('inf')
-        for i, color in enumerate(PLAYER_COLORS):
-            # Calculate color distance (simple RGB Euclidean distance)
-            distance = sum((c1 - c2) ** 2 for c1, c2 in zip(color, target_color))
-            if distance < min_distance:
-                min_distance = distance
-                closest_index = i
-        
-        return closest_index
-                
     def _on_grid_update(self, grid):
         """Called when grid state is updated"""
         # Update game screen if active

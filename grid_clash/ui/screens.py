@@ -105,8 +105,16 @@ class RoomListScreen(Screen):
         super().__init__(game)
         self.rooms = []
         self.buttons = []
+        self.last_refresh_time = 0
+        self.refresh_interval = 2.0  # refresh every 2 seconds
         
     def update(self):
+         # Auto-refresh room list periodically
+        current_time = pygame.time.get_ticks() / 1000.0
+        if current_time - self.last_refresh_time > self.refresh_interval:
+            self.game.network_client.request_room_list()
+            self.last_refresh_time = current_time
+
         # Rooms are populated via network callbacks from main.py
         cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2
         self.buttons = []
@@ -204,7 +212,7 @@ class LobbyScreen(Screen):
             
             # Player color indicator
             color_circle = pygame.Rect(player_rect.x + 15, player_rect.centery - 15, 30, 30)
-            pygame.draw.circle(surface, player.color, color_circle.center, 15)
+            pygame.draw.circle(surface, player._color, color_circle.center, 15)
             
             # Player name
             is_you = (local_id is not None and player_local_id == local_id)
@@ -227,6 +235,10 @@ class LobbyScreen(Screen):
             
     def start_game(self):
         if len(self.players_copy) >= MIN_PLAYERS:
+            if self.game.current_room:
+                self.game.current_room.winner = None
+                self.game.current_room.winner_score = 0
+                self.game.current_room.is_tie = False
             self.game.set_screen("game")
             
     def leave_lobby(self):
@@ -255,10 +267,33 @@ class GameScreen(Screen):
         # Create thread-safe copy of players for drawing
         if self.game.current_room and hasattr(self.game.current_room, 'players'):
             self.players_copy = self.game.current_room.players.copy()
+
+        if network_grid and self.is_grid_full(network_grid) and self.game.current_room:
+            winner_id, winner_score = self.grid.get_winner()
+            log(winner_id)
+            if winner_id is not None and winner_id in self.players_copy:
+                # single winner
+                self.game.current_room.winner = self.players_copy[winner_id]
+                self.game.current_room.winner_score = winner_score
+                self.game.current_room.is_tie = False
+                pygame.time.delay(50)  # so the server doesnt zero the grids before the other clients detect game over
+                self.game.network_client.leave_room()
+                self.game.set_screen("game_over")
+            elif winner_id is None and winner_score > 0:
+                # tie
+                self.game.current_room.winner = None
+                self.game.current_room.winner_score = winner_score
+                self.game.current_room.is_tie = True
+                pygame.time.delay(50)  # so the server doesnt zero the grids before the other clients detect game over
+                self.game.network_client.leave_room()
+                self.game.set_screen("game_over")
             
         self.buttons = [
-            Button(pygame.Rect(WINDOW_WIDTH - 120, 20, 100, 40), "Menu", self.show_menu)
+            Button(pygame.Rect(WINDOW_WIDTH - 120, 15, 100, 40), "Exit", self.show_menu)
         ]
+    
+    def is_grid_full(self, grid):
+        return all(cell != 0 for cell in grid)
         
     def draw(self, surface):
         surface.fill(Colors.BACKGROUND)
@@ -275,7 +310,7 @@ class GameScreen(Screen):
         # Get player colors from THREAD-SAFE COPY
         player_colors = {}
         for player_local_id, player in self.players_copy.items():
-            player_colors[player_local_id] = player.color
+            player_colors[player_local_id] = player._color
             
         self.grid.draw(surface, grid_offset_x, grid_offset_y, player_colors)
         
@@ -285,8 +320,8 @@ class GameScreen(Screen):
         pygame.draw.line(surface, Colors.GRID_BORDER, (WINDOW_WIDTH - 300, 0), (WINDOW_WIDTH - 300, WINDOW_HEIGHT), 2)
         
         # Leaderboard content
-        draw_text(surface, room.name, 24, (WINDOW_WIDTH - 150, 30), Colors.TEXT_ACCENT, center=True)
-        draw_text(surface, f"Players: {len(self.players_copy)}", 18, (WINDOW_WIDTH - 150, 60), Colors.TEXT, center=True)
+        draw_text(surface, room.name, 24, (WINDOW_WIDTH - 250, 30), Colors.TEXT_ACCENT, center=True)
+        draw_text(surface, f"Players: {len(self.players_copy)}", 18, (WINDOW_WIDTH - 250, 50), Colors.TEXT, center=True)
         
         # Player scores (calculate from grid)
         start_y = 100
@@ -304,7 +339,7 @@ class GameScreen(Screen):
             player_y = start_y + i * 50
             
             # Player color
-            pygame.draw.circle(surface, player.color, (WINDOW_WIDTH - 270, player_y), 10)
+            pygame.draw.circle(surface, player._color, (WINDOW_WIDTH - 270, player_y), 10)
             
             # Player name
             is_you = (local_id is not None and player_local_id == local_id)
@@ -321,13 +356,6 @@ class GameScreen(Screen):
             warning_text = f"Need {needed} more player{'s' if needed > 1 else ''} to start"
             draw_text(surface, warning_text, 20, (WINDOW_WIDTH // 2, WINDOW_HEIGHT - 30), 
                      (255, 50, 50), center=True)  # Red color
-            
-        # Check for game end (grid full)
-        if self.grid.is_full():
-            winner_id, winner_score = self.grid.get_winner()
-            if winner_id and winner_id in self.players_copy:
-                self.game.winner = self.players_copy[winner_id]
-                self.game.set_screen("game_over")
         
         # Draw buttons
         for button in self.buttons:
@@ -357,21 +385,35 @@ class GameOverScreen(Screen):
         
     def update(self):
         self.buttons = [
-            Button(centered_rect(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 + 100, 200, 52), "Main Menu", self.main_menu)
+            Button(centered_rect(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 + 160, 200, 52), "Main Menu", self.main_menu)
         ]
         
     def draw(self, surface):
         surface.fill(Colors.BACKGROUND)
         cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2
         
-        if self.game.winner:
+        # Get winner info from the current room
+        room = self.game.current_room
+        if not room:
+            return
+            
+        if room.is_tie:
+            # Tie game
+            draw_text(surface, "Game Over!", 48, (cx, cy - 80), Colors.TEXT_ACCENT, center=True)
+            draw_text(surface, "It's a Tie!", 36, (cx, cy - 20), Colors.TEXT, center=True)
+            draw_text(surface, f"Score: {room.winner_score}", 24, (cx, cy + 20), Colors.TEXT, center=True)
+            
+        elif room.winner:
+            # Single winner
             draw_text(surface, "Game Over!", 48, (cx, cy - 80), Colors.TEXT_ACCENT, center=True)
             draw_text(surface, f"Winner:", 36, (cx, cy - 20), Colors.TEXT, center=True)
             
             # Winner color and name
-            pygame.draw.circle(surface, self.game.winner.color, (cx, cy + 30), 20)
-            draw_text(surface, self.game.winner.name, 32, (cx, cy + 80), Colors.TEXT_ACCENT, center=True)
+            pygame.draw.circle(surface, room.winner._color, (cx, cy + 30), 20)
+            draw_text(surface, room.winner.name, 32, (cx, cy + 80), Colors.TEXT_ACCENT, center=True)
+            draw_text(surface, f"Score: {room.winner_score}", 24, (cx, cy + 120), Colors.TEXT, center=True)
         else:
+            # No winner (empty grid or other edge case)
             draw_text(surface, "Game Over!", 48, (cx, cy), Colors.TEXT_ACCENT, center=True)
         
         for button in self.buttons:
@@ -379,8 +421,10 @@ class GameOverScreen(Screen):
             button.draw(surface)
             
     def main_menu(self):
-        # Leave room when going to main menu
-        self.game.network_client.leave_room()
-        self.game.current_room = None
-        self.game.winner = None
+        if self.game.current_room:
+            self.game.current_room.winner = None
+            self.game.current_room.winner_score = 0
+            self.game.current_room.is_tie = False
+            self.game.current_room = None
+            
         self.game.set_screen("main_menu")

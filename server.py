@@ -250,6 +250,13 @@ class ESPServerProtocol:
                 
         if sent:
             log(f"Player {player_id} joined room {room_id} as local id {local_id}")
+
+            # rejoining player has to get a snasphot
+            player_info = self.players.get(player_id)
+            if player_info:
+                payload = build_snapshot_payload(room.grid)
+                self.send(MESSAGE_TYPES['SNAPSHOT'], player_info.address, payload=payload, ack=True)
+
             self.pkt_id += 1
     
     def handle_leave_room(self, pkt, addr):
@@ -277,11 +284,27 @@ class ESPServerProtocol:
         self.players[player_id].room_id = 0
         self.players[player_id].player_local_id = 0
 
-        # # CHECK IF ROOM IS EMPTY AND REMOVE IT
-        # if len(room.players) == 0:
-        #     del self.rooms[room_id]
-        #     log(f"Removed empty room {room_id}")
-        #     return
+        # remove grid cells of leaving player
+        for i in range(len(room.grid)):
+            if room.grid[i] == local_id:
+                room.grid[i] = 0  # Free the cell
+        
+        # remove their events from the room updates
+        room.updates = deque([update for update in room.updates if update[1] != local_id], 
+                            maxlen=LAST_K_UPDATES)
+        
+        # notify everyone of this using a snapshot
+        room.snapshot_id += 1
+
+        # send clearance snapshot
+        snapshot_payload = build_snapshot_payload(room.grid)
+        for player in room.players.values():
+            player_info = self.players.get(player.global_id)
+            if player_info:
+                self.send(MESSAGE_TYPES['SNAPSHOT'], player_info.address, payload=snapshot_payload, ack=True)
+
+        # gotta check if the room is empty or not so we can remove it later
+        room_empty = len(room.players) == 0
         
         players = {lid: (p.global_id, p.color) for lid, p in room.players.items()}
         sent = False   
@@ -304,6 +327,11 @@ class ESPServerProtocol:
         if sent:
             log(f"Player {player_id} left room {room_id}")
             self.pkt_id += 1
+
+        # ONLY AFTER sending acks, remove empty room
+        if room_empty:
+            del self.rooms[room_id]
+            log(f"Removed empty room {room_id}")
         
     def handle_list_rooms(self, pkt, addr):
         player_id = self.addr_to_player.get(addr)
