@@ -1,4 +1,4 @@
-import struct, time, zlib, csv, psutil, random, os
+import struct, time, zlib, csv, psutil, logging, os
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Dict, Tuple, List, Deque
@@ -515,3 +515,6 @@ def parse_snapshot_ack_payload(payload: bytes):
 
 def log(*args, **kwargs):
     print(*args, **kwargs, flush=True)
+    if logging.getLogger().hasHandlers():
+        message = " ".join(str(a) for a in args)
+        logging.info(message)

@@ -80,7 +80,7 @@ for SCENARIO in "${SCENARIOS[@]}"; do
   TCPDUMP_PID=$!
 
   # Start server
-  python3 server.py --duration $DURATION > "$LOGDIR/server_stdout.log" 2>&1 &
+  python3 server.py --duration $DURATION --log "$LOGDIR/server.log" &
   SERVER_PID=$!
   echo "[TEST] Server started (PID=$SERVER_PID)"
   sleep 2
@@ -89,7 +89,7 @@ for SCENARIO in "${SCENARIOS[@]}"; do
   CLIENT_PIDS=()
 
   # 1️⃣ Client 1 → test 0
-  python3 client.py --metrics_id 1 --test "0" --duration $DURATION > "$LOGDIR/client1_stdout.log" 2>&1 &
+  python3 client.py --metrics_id 1 --test "0" --duration $DURATION --log "$LOGDIR/client1_stdout.log" & 
   CLIENT_PIDS+=($!)
   echo "[TEST] Started client1 (test=0, PID=${CLIENT_PIDS[-1]})"
 
@@ -97,7 +97,7 @@ for SCENARIO in "${SCENARIOS[@]}"; do
 
   # 2️⃣–4️⃣ Clients 2-4 → test 1
   for ((i=2; i<=NUM_CLIENTS; i++)); do
-    python3 client.py --metrics_id $i --test "1" --duration $DURATION > "$LOGDIR/client${i}_stdout.log" 2>&1 &
+    python3 client.py --metrics_id $i --test "1" --duration $DURATION --log "$LOGDIR/client${i}_stdout.log" & 
     CLIENT_PIDS+=($!)
     echo "[TEST] Started client${i} (test=1, PID=${CLIENT_PIDS[-1]})"
     sleep 0.5

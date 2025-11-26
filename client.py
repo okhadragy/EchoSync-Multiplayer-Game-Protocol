@@ -5,13 +5,15 @@ from ESP_config import *
 
 # === Client ===
 class ESPClientProtocol:
-    def __init__(self, server_addr, metrices_id=None, send_init = True):
+    def __init__(self, server_addr, metrices_id=None, send_init = True, islogging=False):
         self.server_addr = server_addr
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setblocking(False)
         metrices_id = metrices_id if metrices_id is not None else random.randint(1000,9999)
         self.fragment_manager = FragmentManager()
-        self.metrics_logger = MetricsLogger(f"client_{metrices_id}_metrics.csv", server_mode=False)
+        self.islogging = islogging
+        if self.islogging:
+            self.metrics_logger = MetricsLogger(f"client_{metrices_id}_metrics.csv", server_mode=False)
         self.bytes_received = 0 
     
         self.tasks = {
@@ -43,11 +45,11 @@ class ESPClientProtocol:
     
     def run(self, duration=None, test=None):
         try:
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Running (Ctrl+C to stop)")
+            log(f"[Client] Running (Ctrl+C to stop)")
             start = time.time()
             while True:
                 if duration and (time.time() - start) >= duration:
-                    log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Test duration ended, client stopped")
+                    log(f"[Client] Test duration ended, client stopped")
                     self.disconnect()
                     break
                     
@@ -69,11 +71,11 @@ class ESPClientProtocol:
                             else:
                                 t["func"]()
                         except Exception as e:
-                            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] {name} error:", e)
+                            log(f"[Client] {name} error:", e)
                         t["last"] = now
                        
         except KeyboardInterrupt:
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Stopping by user (Ctrl+C).")
+            log(f"[Client] Stopping by user (Ctrl+C).")
             self.disconnect()
             return
             
@@ -119,7 +121,7 @@ class ESPClientProtocol:
             elif msg_type == MESSAGE_TYPES['SNAPSHOT']:
                 self.handle_snapshot(pkt)
             else:
-                log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Unknown msg type {msg_type}")
+                log(f"[Client] Unknown msg type {msg_type}")
 
     # === Send helpers ===
     def send(self, msg_type, payload=b'', ack=True, repeat=1):
@@ -158,14 +160,14 @@ class ESPClientProtocol:
 
     # === Message Senders ===
     def send_init(self):
-        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Sending INIT")
+        log(f"[Client] Sending INIT")
         self.send(MESSAGE_TYPES['INIT'])
 
     def send_create_room(self, name):
         if not isinstance(name, str):
             return
         payload = build_create_room_payload(name)
-        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Creating room: {name}")
+        log(f"[Client] Creating room: {name}")
         self.send(MESSAGE_TYPES['CREATE_ROOM'], payload)
 
     def send_join_room(self, room_id):
@@ -173,17 +175,17 @@ class ESPClientProtocol:
             return
         
         payload = build_join_room_payload(room_id)
-        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Joining room {room_id}")
+        log(f"[Client] Joining room {room_id}")
         self.send(MESSAGE_TYPES['JOIN_ROOM'], payload)
         
     def send_leave_room(self):
         if self.room_id is None:
             return
-        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Leaving room {self.room_id}")
+        log(f"[Client] Leaving room {self.room_id}")
         self.send(MESSAGE_TYPES['LEAVE_ROOM'])
 
     def send_list_rooms(self):
-        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Requesting room list")
+        log(f"[Client] Requesting room list")
         self.send(MESSAGE_TYPES['LIST_ROOMS'])
 
     def request_cell(self, cell_idx):
@@ -193,7 +195,7 @@ class ESPClientProtocol:
 
         payload = build_event_payload(EVENT_TYPES['CELL_ACQUISITION'], self.room_id, self.local_id, cell_idx)
         self.pending_cells[cell_idx] = time.time_ns()
-        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Cell {cell_idx} → PENDING (ownership requested)")
+        log(f"[Client] Cell {cell_idx} → PENDING (ownership requested)")
         self.send(MESSAGE_TYPES['EVENT'], payload, False)
         
     def send_updates_ack(self, seq_num):
@@ -209,7 +211,7 @@ class ESPClientProtocol:
         self.send(MESSAGE_TYPES['SNAPSHOT_ACK'], payload, False)
 
     def disconnect(self):
-        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Disconnecting...")
+        log(f"[Client] Disconnecting...")
         self.send(MESSAGE_TYPES['DISCONNECT'])
         try:
             self.sock.close()
@@ -224,7 +226,7 @@ class ESPClientProtocol:
             if not self.ack_packet(seq):
                 return
             self.player_id = player_id
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Got player_id = {self.player_id}")
+            log(f"[Client] Got player_id = {self.player_id}")
 
     def handle_create_ack(self, payload):
         res = parse_create_ack_payload(payload)
@@ -233,7 +235,7 @@ class ESPClientProtocol:
             if not self.ack_packet(seq):
                 return
             self.room_id = room_id
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Room created -> id {self.room_id}")
+            log(f"[Client] Room created -> id {self.room_id}")
             self.send_join_room(self.room_id)
     
     
@@ -248,8 +250,8 @@ class ESPClientProtocol:
             self.room_id = room_id
             self.local_id = local_id
             
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Joined room {self.room_id} as local id {self.local_id}")
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Room players: {self.players}")
+            log(f"[Client] Joined room {self.room_id} as local id {self.local_id}")
+            log(f"[Client] Room players: {self.players}")
             
     def handle_leave_ack(self, payload):
         res = parse_leave_ack_payload(payload)
@@ -257,7 +259,7 @@ class ESPClientProtocol:
             seq, self.players = res
             if not self.ack_packet(seq):
                 return
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Left room {self.room_id} as local id {self.local_id}")
+            log(f"[Client] Left room {self.room_id} as local id {self.local_id}")
             self.room_id = None
             self.players = {}
             self.local_id = None
@@ -268,7 +270,7 @@ class ESPClientProtocol:
             seq, rooms = res
             if not self.ack_packet(seq):
                 return
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Available Rooms:") 
+            log(f"[Client] Available Rooms:") 
             for rid, (count, name) in rooms.items():
                 log(f" - {rid}: {name} ({count} players)")
             self.rooms = rooms
@@ -293,7 +295,7 @@ class ESPClientProtocol:
             
             self.grid[cell_idx] = player_local_id
             owner = "you" if player_local_id == self.local_id else f"player {player_local_id}"
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Cell {cell_idx} CONFIRMED for {owner}")
+            log(f"[Client] Cell {cell_idx} CONFIRMED for {owner}")
 
     def handle_event(self, pkt):
         payload = pkt['payload']
@@ -317,20 +319,21 @@ class ESPClientProtocol:
                     
                 self.snapshot_id = pkt['snapshot_id']
                 for seq_key in pkt['seq_keys']: 
-                    log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Update #{self.snapshot_id} seq #{seq_key} received & ACKed")
+                    log(f"[Client] Update #{self.snapshot_id} seq #{seq_key} received & ACKed")
                 
             for seq_key in pkt['seq_keys']:    
                 self.send_updates_ack(seq_key)
                 recv_time = time.time_ns()
-                self.metrics_logger.log_snapshot(
-                    client_id=self.player_id,
-                    snapshot_id=pkt['snapshot_id'],
-                    seq_num=seq_key,
-                    server_time=pkt['timestamp'],
-                    recv_time=recv_time,
-                    grid=self.grid,
-                    bytes_received=self.bytes_received
-                )
+                if self.islogging:
+                    self.metrics_logger.log_snapshot(
+                        client_id=self.player_id,
+                        snapshot_id=pkt['snapshot_id'],
+                        seq_num=seq_key,
+                        server_time=pkt['timestamp'],
+                        recv_time=recv_time,
+                        grid=self.grid,
+                        bytes_received=self.bytes_received
+                    )
             
     def handle_snapshot(self, pkt):
         payload = pkt['payload']
@@ -340,7 +343,7 @@ class ESPClientProtocol:
             self.snapshot_id = pkt['snapshot_id']
             for seq_key in pkt['seq_keys']:    
                 self.send_snapshot_ack(seq_key)
-                log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Snapshot #{self.snapshot_id} seq #{seq_key} received & ACKed")
+                log(f"[Client] Snapshot #{self.snapshot_id} seq #{seq_key} received & ACKed")
 
     # === Background retransmit task ===
     def retransmit(self):
@@ -348,7 +351,7 @@ class ESPClientProtocol:
         for seq, info in list(self.unacked_packets.items()):
             if info['sent_count'] >= MAX_TRANSMISSION_RETRIES:
                 del self.unacked_packets[seq]
-                log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Dropping packet seq={seq} after {MAX_TRANSMISSION_RETRIES} retries (no ACK)")
+                log(f"[Client] Dropping packet seq={seq} after {MAX_TRANSMISSION_RETRIES} retries (no ACK)")
                 continue
             
             if now - info['last_sent'] > int(RETRANS_TIMEOUT * 1e9):
@@ -359,7 +362,7 @@ class ESPClientProtocol:
                     pass
                 info['last_sent'] = now
                 info['sent_count'] += 1
-                log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] resent packet seq={seq} ({info['sent_count']}/{MAX_TRANSMISSION_RETRIES})")
+                log(f"[Client] resent packet seq={seq} ({info['sent_count']}/{MAX_TRANSMISSION_RETRIES})")
                     
 
     # === Background pending timeout cleanup ===
@@ -368,7 +371,7 @@ class ESPClientProtocol:
         now = time.time_ns()
         for cell_idx, t0 in list(self.pending_cells.items()):
             if now - t0 > int(RETRANS_TIMEOUT * 1e9):
-                log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Cell {cell_idx} pending too long → retrying request")
+                log(f"[Client] Cell {cell_idx} pending too long → retrying request")
                 del self.pending_cells[cell_idx]
                 self.request_cell(cell_idx)
     
@@ -377,7 +380,7 @@ class ESPClientProtocol:
         # Handle test 1 auto-join
         if test == 1 and self.rooms and not self.room_id:
             first_room = next(iter(self.rooms.keys()))
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Client] Auto-joining room {first_room}")
+            log(f"[Client] Auto-joining room {first_room}")
             self.send_join_room(first_room)
         
         # only attempt when in room and has a local_id
@@ -391,9 +394,15 @@ if __name__ == "__main__":
     parser.add_argument("--metrics_id", type=int, help="Metrics ID for client", required=False)
     parser.add_argument("--test", type=int, help="Choose test sequence", required=False)
     parser.add_argument("--duration", type=int, help="Test duration in seconds", required=False)
+    parser.add_argument("--log", type=str, help="Log file path", required=False)
     args = parser.parse_args()
     
-    client = ESPClientProtocol(("127.0.0.1", 9999), metrices_id=args.metrics_id)
+    islogging = False
+    if args.log:
+        logging.basicConfig(filename=args.log, level=logging.INFO, format="%(asctime)s %(message)s")
+        islogging = True
+    
+    client = ESPClientProtocol(("127.0.0.1", 9999), metrices_id=args.metrics_id, islogging=islogging)
     if args.test is not None:
         if args.test == 0:
             client.send_create_room(f"Room_{random.randint(100,999)}")

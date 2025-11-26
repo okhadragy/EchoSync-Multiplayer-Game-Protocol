@@ -1,15 +1,17 @@
 from ESP_config import *
-import logging, argparse, socket, select, sys
+import argparse, socket, select, sys, random
 
 
 # ====== Server Implementation ======
 class ESPServerProtocol:
-    def __init__(self, host="0.0.0.0", port=9999):
+    def __init__(self, host="0.0.0.0", port=9999, islogging=False):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((host, port))
         self.sock.setblocking(False)
         self.fragment_manager = FragmentManager()
-        self.metrics_logger = MetricsLogger()
+        self.islogging = islogging
+        if self.islogging:
+            self.metrics_logger = MetricsLogger()
         
         self.tasks = {
             "broadcast_updates": {"interval": UPDATES_INTERVAL, "last": 0.0, "func": self.send_updates_to_all},
@@ -147,13 +149,14 @@ class ESPServerProtocol:
                 }
             
             if msg_type == MESSAGE_TYPES['UPDATES']:
-                self.metrics_logger.log_snapshot(
-                    client_id=player_id,
-                    snapshot_id=snapshot_id,
-                    seq_num=self.seq[player_id],
-                    server_time=parse_packet(p)['timestamp'],
-                    grid=self.rooms.get(self.players.get(player_id).room_id).grid,
-                )
+                if self.islogging:
+                    self.metrics_logger.log_snapshot(
+                        client_id=player_id,
+                        snapshot_id=snapshot_id,
+                        seq_num=self.seq[player_id],
+                        server_time=parse_packet(p)['timestamp'],
+                        grid=self.rooms.get(self.players.get(player_id).room_id).grid,
+                    )
                 
             self.seq[player_id] += 1
         
@@ -175,7 +178,7 @@ class ESPServerProtocol:
             payload = build_init_ack_payload(seq_key, self.next_player_id)
             if not self.send(MESSAGE_TYPES['INIT_ACK'], addr, payload):
                 return
-        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Connected player {self.next_player_id} from {addr}")
+        log(f"[SERVER] Connected player {self.next_player_id} from {addr}")
         self.next_player_id += 1
         self.pkt_id += 1
         
@@ -191,7 +194,7 @@ class ESPServerProtocol:
             if not self.send(MESSAGE_TYPES['CREATE_ACK'], addr, payload):
                 return
                 
-        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Created room {room_id} named '{room_name}'")
+        log(f"[SERVER] Created room {room_id} named '{room_name}'")
         self.next_room_id += 1
         self.pkt_id += 1
         
@@ -246,10 +249,13 @@ class ESPServerProtocol:
                 payload = build_join_ack_payload(seq_key, room_id, ld, players)
                 if not self.send(MESSAGE_TYPES['JOIN_ACK'], address, payload, False, REDUNDANT_K_PACKETS):
                     break
+                log(f"[SERVER] Sent join ack for player {player.global_id} as local id {ld}")
                 sent = True
                 
         if sent:
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Player {player_id} joined room {room_id} as local id {local_id}")
+            log(f"[SERVER] Player {player_id} joined room {room_id} successfully as local id {local_id}")
+            # rejoining player has to get a snasphot
+            player_info = self.players.get(player_id)
             if player_info:
                 payload = build_snapshot_payload(room.grid)
                 self.send(MESSAGE_TYPES['SNAPSHOT'], player_info.address, payload=payload, ack=True)
@@ -321,7 +327,7 @@ class ESPServerProtocol:
                 sent = True
         
         if sent:
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Player {player_id} left room {room_id}")
+            log(f"[SERVER] Player {player_id} left room {room_id}")
             self.pkt_id += 1
 
         # ONLY AFTER sending acks, remove empty room
@@ -341,7 +347,7 @@ class ESPServerProtocol:
             if not self.send(MESSAGE_TYPES['LIST_ROOMS_ACK'], addr, payload):
                 return
         
-        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Sent room list to {addr}")
+        log(f"[SERVER] Sent room list to {addr}")
         self.pkt_id += 1
         
     def handle_event(self, pkt, addr):
@@ -372,7 +378,7 @@ class ESPServerProtocol:
             if not self.send(MESSAGE_TYPES['EVENT'], address, payload, False, REDUNDANT_K_PACKETS):
                 return
             
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Sent event to {address}")
+            log(f"[SERVER] Sent Ignore Event (players < required number of room players) to {address}")
         else:
             self.update_cell(event_type, room, player_local_id, cell_idx)
             for ld, player in room.players.items():
@@ -384,7 +390,7 @@ class ESPServerProtocol:
                 if not self.send(MESSAGE_TYPES['EVENT'], address, pkt['payload'], False, REDUNDANT_K_PACKETS):
                     continue
                 sent = True
-                log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Sent event to {address}")
+                log(f"[SERVER] Sent Event (Type: {event_type}, Room (ID:{room.room_id}, Name: {room.name}), Player local id:{player_local_id}, Cell index:{cell_idx}) to {address}")
         if sent:
             self.pkt_id += 1
         
@@ -467,7 +473,7 @@ class ESPServerProtocol:
         player_id = self.addr_to_player.get(addr)
         if player_id:
             self.cleanup_player(player_id)
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Player {player_id} disconnected gracefully")
+            log(f"[SERVER] Player {player_id} disconnected gracefully")
 
     # Helper Methods
     def send_updates_to_all(self):
@@ -483,7 +489,7 @@ class ESPServerProtocol:
                 
                 if not self.send(MESSAGE_TYPES['UPDATES'], self.players[player.global_id].address, payload=payload, ack = True):
                     continue                
-                log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Updates Sent Player ID:{player.global_id}, Seq_num:{self.seq[player.global_id]}")
+                log(f"[SERVER] Updates Sent Player ID:{player.global_id}, Seq_num:{self.seq[player.global_id]}")
                 sent = True
                 
         if sent:
@@ -501,7 +507,7 @@ class ESPServerProtocol:
             local_id = player.player_local_id
             if local_id in room.players:
                 del room.players[local_id]
-            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Removed player {player_id} (local id {local_id}) from room {room_id}")
+            log(f"[SERVER] Removed player {player_id} (local id {local_id}) from room {room_id}")
 
         # --- 2. Remove mapping ---
         addr = player.address
@@ -513,7 +519,7 @@ class ESPServerProtocol:
         # --- 4. Remove player object ---
         del self.players[player_id]
 
-        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] ✅ Cleaned up player {player_id}")
+        log(f"[SERVER] ✅ Cleaned up player {player_id}")
 
     def retransmit(self):
         now = time.time_ns()
@@ -538,9 +544,10 @@ if __name__ == "__main__":
     parser.add_argument("--duration", type=int, help="Run duration (seconds). Omit for continuous run.")
     parser.add_argument("--log", type=str, help="Log file path", required=False)
     args = parser.parse_args()
-    
-    if  args.log:
+    islogging = False
+    if args.log:
         logging.basicConfig(filename=args.log, level=logging.INFO, format="%(asctime)s %(message)s")
+        islogging = True
 
-    server = ESPServerProtocol()
+    server = ESPServerProtocol(islogging=islogging)
     server.run(args.duration)
