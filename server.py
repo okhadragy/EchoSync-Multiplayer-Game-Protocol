@@ -175,7 +175,7 @@ class ESPServerProtocol:
             payload = build_init_ack_payload(seq_key, self.next_player_id)
             if not self.send(MESSAGE_TYPES['INIT_ACK'], addr, payload):
                 return
-        log(f"Connected player {self.next_player_id} from {addr}")
+        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Connected player {self.next_player_id} from {addr}")
         self.next_player_id += 1
         self.pkt_id += 1
         
@@ -191,7 +191,7 @@ class ESPServerProtocol:
             if not self.send(MESSAGE_TYPES['CREATE_ACK'], addr, payload):
                 return
                 
-        log(f"Created room {room_id} named '{room_name}'")
+        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Created room {room_id} named '{room_name}'")
         self.next_room_id += 1
         self.pkt_id += 1
         
@@ -249,14 +249,10 @@ class ESPServerProtocol:
                 sent = True
                 
         if sent:
-            log(f"Player {player_id} joined room {room_id} as local id {local_id}")
-
-            # rejoining player has to get a snasphot
-            player_info = self.players.get(player_id)
+            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Player {player_id} joined room {room_id} as local id {local_id}")
             if player_info:
                 payload = build_snapshot_payload(room.grid)
                 self.send(MESSAGE_TYPES['SNAPSHOT'], player_info.address, payload=payload, ack=True)
-
             self.pkt_id += 1
     
     def handle_leave_room(self, pkt, addr):
@@ -325,7 +321,7 @@ class ESPServerProtocol:
                 sent = True
         
         if sent:
-            log(f"Player {player_id} left room {room_id}")
+            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Player {player_id} left room {room_id}")
             self.pkt_id += 1
 
         # ONLY AFTER sending acks, remove empty room
@@ -345,7 +341,7 @@ class ESPServerProtocol:
             if not self.send(MESSAGE_TYPES['LIST_ROOMS_ACK'], addr, payload):
                 return
         
-        log(f"Sent room list to {addr}")
+        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Sent room list to {addr}")
         self.pkt_id += 1
         
     def handle_event(self, pkt, addr):
@@ -376,7 +372,7 @@ class ESPServerProtocol:
             if not self.send(MESSAGE_TYPES['EVENT'], address, payload, False, REDUNDANT_K_PACKETS):
                 return
             
-            log(f"Sent event to {address}")
+            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Sent event to {address}")
         else:
             self.update_cell(event_type, room, player_local_id, cell_idx)
             for ld, player in room.players.items():
@@ -388,7 +384,7 @@ class ESPServerProtocol:
                 if not self.send(MESSAGE_TYPES['EVENT'], address, pkt['payload'], False, REDUNDANT_K_PACKETS):
                     continue
                 sent = True
-                log(f"Sent event to {address}")
+                log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Sent event to {address}")
         if sent:
             self.pkt_id += 1
         
@@ -471,7 +467,7 @@ class ESPServerProtocol:
         player_id = self.addr_to_player.get(addr)
         if player_id:
             self.cleanup_player(player_id)
-            log(f"Player {player_id} disconnected gracefully")
+            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Player {player_id} disconnected gracefully")
 
     # Helper Methods
     def send_updates_to_all(self):
@@ -487,7 +483,7 @@ class ESPServerProtocol:
                 
                 if not self.send(MESSAGE_TYPES['UPDATES'], self.players[player.global_id].address, payload=payload, ack = True):
                     continue                
-                log(f"Updates Sent Player ID:{player.global_id}, Seq_num:{self.seq[player.global_id]}")
+                log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Updates Sent Player ID:{player.global_id}, Seq_num:{self.seq[player.global_id]}")
                 sent = True
                 
         if sent:
@@ -505,7 +501,7 @@ class ESPServerProtocol:
             local_id = player.player_local_id
             if local_id in room.players:
                 del room.players[local_id]
-            log(f"Removed player {player_id} (local id {local_id}) from room {room_id}")
+            log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] Removed player {player_id} (local id {local_id}) from room {room_id}")
 
         # --- 2. Remove mapping ---
         addr = player.address
@@ -517,7 +513,7 @@ class ESPServerProtocol:
         # --- 4. Remove player object ---
         del self.players[player_id]
 
-        log(f"✅ Cleaned up player {player_id}")
+        log(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [SERVER] ✅ Cleaned up player {player_id}")
 
     def retransmit(self):
         now = time.time_ns()

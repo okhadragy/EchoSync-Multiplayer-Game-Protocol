@@ -9,7 +9,8 @@
 set -euo pipefail
 
 IFACE=${1:-eth0}                 # Network interface to test on
-RUN_DIR="./full_run"
+TS="$(date +%Y%m%d_%H%M%S)"
+RUN_DIR="./full_run/$TS"
 mkdir -p "$RUN_DIR"
 
 SCENARIOS=("baseline" "loss2" "loss5" "delay100")
